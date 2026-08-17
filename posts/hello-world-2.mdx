@@ -1,0 +1,44 @@
+---
+title: "Hello World - Episode 2"
+createdAt: "2026-08-15"
+tldr: "Second post on the new GitHub-backed blog — how it's wired up and why."
+tags: ["nextjs", "mdx"]
+---
+
+![Banner](/public/assets/hello-world/banner.jpeg)
+
+
+This is my second post, written in **MDX** and fetched straight from GitHub —
+no rebuild or redeploy needed to publish a new one.
+
+## How it works
+
+Every post lives as a single `.mdx` file in the `posts/` folder of this repo.
+The site fetches the list of files and their content from GitHub at request
+time, so pushing a new file here is the entire publishing step.
+
+## Code blocks now render properly
+
+```ts
+function greet(name: string) {
+  console.log(`hello, ${name}`);
+}
+
+greet("world");
+```
+
+
+
+
+The block above is syntax-highlighted via Shiki, and switches color themes
+automatically with the site's light/dark toggle.
+
+## Frontmatter fields
+
+Every post needs these fields at the top, between the `---` lines:
+
+- **title** — shown as the post heading
+- **date** — ISO format (`YYYY-MM-DD`), used for sorting and the displayed date
+- **tldr** — one or two sentences, shown in the TL;DR box and post list
+- **tags** — optional, an array of short strings shown as pills
+- **draft** — optional, set `draft: true` to hide a post from the list without deleting it
