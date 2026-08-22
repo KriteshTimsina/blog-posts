@@ -1,0 +1,256 @@
+---
+title: "Setting Up a VPS From Scratch — Part 1: Server Hardening Basics"
+date: 2026-08-22
+tags: [devops, linux, vps, security]
+---
+
+# Setting Up a VPS From Scratch — Part 1: Server Hardening Basics
+
+I recently moved away from shared hosting and started self-managing a VPS. The goal wasn't just to save money or get more control — it was to actually *learn* the things shared hosting had been hiding from me: Linux administration, security fundamentals, and eventually Docker and CI/CD.
+
+This is the first post in a multi-part series documenting that journey. If you've just spun up a fresh VPS (DigitalOcean, Hetzner, Linode, AWS Lightsail — doesn't matter which), this post walks through the first things you should do before anything else touches that server.
+
+We won't be deploying any apps yet. This part is entirely about locking the front door before we start moving furniture in.
+
+## What we'll cover in this part
+
+1. Updating, upgrading, and rebooting (including kernel upgrades)
+2. Checking whether a reboot is actually required
+3. Creating a non-root user
+4. Changing the root password
+5. Adding the new user to the sudo group
+6. Switching from `root@ip` to `user@ip`
+7. Setting up SSH keys and disabling password login
+8. Disabling root login entirely
+9. Setting up the UFW firewall
+
+By the end, you'll have a server that isn't a sitting target the moment it gets an IP address.
+
+---
+
+## 1. Update, upgrade, and reboot
+
+The very first thing to do on a fresh VPS — before creating users, before anything — is bring the package list and installed packages up to date.
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+- `apt update` refreshes the local index of available packages and their versions. It doesn't install anything yet — it just tells your system what's out there.
+- `apt upgrade -y` actually installs the newer versions of packages you already have. The `-y` flag auto-confirms the prompts.
+
+Occasionally this upgrade includes a new kernel version. The kernel is the core of the OS, and unlike most packages, it can't be hot-swapped while running — the new kernel only takes effect after a reboot.
+
+```bash
+sudo reboot
+```
+
+Don't skip this. Running on an old kernel while your userland packages are all patched is a common way to leave known vulnerabilities open.
+
+## 2. Check if a reboot is required
+
+Ubuntu (and Debian-based systems generally) make this easy — you don't have to guess. After an upgrade, check for this file:
+
+```bash
+ls /var/run/reboot-required
+```
+
+If it exists, a reboot is required — usually because of a kernel or core library update. If the file isn't there, you're fine to continue without rebooting.
+
+You can also see *why* a reboot is needed:
+
+```bash
+cat /var/run/reboot-required.pkgs
+```
+
+This lists the specific packages that triggered the flag.
+
+> **Note:** the reboot-required flag file lives at `/var/run/reboot-required`, not `/app/bin/reboot-required` — `/app` isn't a standard path on a Linux server. If you've seen a different path referenced somewhere, double check it against your specific distro's docs, but on Ubuntu/Debian this is the one to use.
+
+## 3. Create a non-root user
+
+Every fresh VPS drops you in as `root` by default. Root has unrestricted power over the entire system — which is exactly why you shouldn't use it for day-to-day work. One mistyped `rm -rf` or one compromised process running as root can take down or compromise the whole machine. A non-root user with sudo access gives you the same capabilities on demand, with a guardrail in between.
+
+```bash
+adduser yourusername
+```
+
+`adduser` (as opposed to the more bare-bones `useradd`) walks you through setting a password and some optional profile info, and automatically creates a home directory. Follow the prompts.
+
+## 4. Change the root password
+
+Even though we're moving away from using root directly, it's good practice to set (or reset) the root password to something long and random — you may still need it for recovery scenarios via your hosting provider's console.
+
+```bash
+sudo passwd root
+```
+
+You'll be prompted to enter a new password twice. Store it somewhere safe (a password manager, not a sticky note).
+
+## 5. Add the non-root user to the sudo group
+
+Right now, your new user can log in but can't run administrative commands. Adding them to the `sudo` group fixes that:
+
+```bash
+usermod -aG sudo yourusername
+```
+
+Breaking this down:
+- `-a` = append (add to the group without removing existing group memberships)
+- `-G` = specify the group(s) to add
+- `sudo` = the group that grants sudo privileges on Debian/Ubuntu systems
+
+Without `-a`, `usermod -G` would *replace* the user's group memberships entirely — always use `-a` when adding to a group, or you can accidentally strip other permissions.
+
+Verify it worked:
+
+```bash
+groups yourusername
+```
+
+You should see `sudo` in the output.
+
+## 6. Log in as your new user instead of root
+
+From here on, stop using:
+
+```bash
+ssh root@your-server-ip
+```
+
+And start using:
+
+```bash
+ssh yourusername@your-server-ip
+```
+
+Test this in a **new terminal window** while keeping your existing root session open. If something's misconfigured, you don't want to be locked out with no working session left to fix it from.
+
+Once logged in as your new user, confirm sudo actually works:
+
+```bash
+sudo whoami
+```
+
+This should return `root` — proving your user can escalate privileges when needed, without being logged in as root.
+
+## 7. Set up SSH keys and disable password login
+
+Passwords are guessable, phishable, and brute-forceable. SSH key pairs are dramatically more secure — a private key never leaves your machine, and the server only ever sees the public half.
+
+**On your local machine** (not the server), generate a key pair if you don't already have one:
+
+```bash
+ssh-keygen -t ed25519 -C "your-email@example.com"
+```
+
+`ed25519` is a modern, fast, secure key type — prefer it over the older RSA unless you have a specific compatibility reason not to.
+
+Copy the public key to your server:
+
+```bash
+ssh-copy-id yourusername@your-server-ip
+```
+
+This appends your public key to `~/.ssh/authorized_keys` on the server for that user. Test that key-based login works *before* touching anything else:
+
+```bash
+ssh yourusername@your-server-ip
+```
+
+You should now get in without being prompted for a password.
+
+Once confirmed, disable password authentication on the server. Edit the SSH config:
+
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+
+Find and set:
+
+```
+PasswordAuthentication no
+PubkeyAuthentication yes
+```
+
+Then restart SSH:
+
+```bash
+sudo systemctl restart ssh
+```
+
+> **Before you close your current session**, open a fresh terminal and confirm you can still log in with your key. If you can't, don't close your existing connected session — fix the problem there first.
+
+## 8. Disable root login
+
+Even with a strong root password, allowing root to log in directly over SSH is an unnecessary risk — it's the single most-targeted username in automated attacks against public IPs. Since you now have a sudo-capable user, root login isn't needed at all.
+
+In the same `/etc/ssh/sshd_config` file:
+
+```
+PermitRootLogin no
+```
+
+Restart SSH again:
+
+```bash
+sudo systemctl restart ssh
+```
+
+From this point on, root can only be accessed by first logging in as your regular user and running `sudo -i` or `sudo su -` — never directly over SSH.
+
+## 9. Set up the UFW firewall
+
+UFW (Uncomplicated Firewall) is a friendly front-end for `iptables`. By default, a fresh VPS has every port wide open. We want to close everything except what we explicitly need.
+
+Check current status:
+
+```bash
+sudo ufw status
+```
+
+Set sensible defaults — deny all incoming, allow all outgoing:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+```
+
+**Before enabling UFW, allow SSH** — otherwise you'll lock yourself out immediately:
+
+```bash
+sudo ufw allow OpenSSH
+```
+
+(Or, if you changed the default SSH port: `sudo ufw allow 2222/tcp`, substituting your port.)
+
+Now enable it:
+
+```bash
+sudo ufw enable
+```
+
+Confirm the rules:
+
+```bash
+sudo ufw status verbose
+```
+
+You should see SSH allowed and everything else denied by default. As we deploy apps in later parts of this series (web servers, APIs, etc.), we'll come back and open specific ports as needed — nothing more than that.
+
+---
+
+## Where we've landed
+
+At this point, the server:
+
+- Is fully patched and running the latest kernel
+- Has no usable root SSH login
+- Only accepts SSH key-based authentication
+- Has a working non-root sudo user
+- Has a firewall denying everything except SSH
+
+This is the baseline every guide assumes you already have before they get to the "fun" parts — Docker, Nginx, deploying an app. In Part 2, we'll build on this foundation and start setting up the tools needed to actually run something on this box.
+
+If you're following along on your own VPS, take a moment here to disconnect your original root session entirely and reconnect fresh as your new user, just to be sure everything holds up outside of the session where you made the changes.
