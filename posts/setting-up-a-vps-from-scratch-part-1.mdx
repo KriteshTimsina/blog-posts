@@ -1,7 +1,7 @@
 ---
 title: "Setting Up a VPS From Scratch — Part 1: Server Hardening Basics"
 date: 2026-08-22
-tldr: "A fresh VPS starts wide open — root login enabled, password auth on, no firewall. This post walks through fixing that before deploying anything: patching the system and rebooting for kernel updates, creating a sudo-capable non-root user, switching SSH access to that user, locking SSH down to key-only auth, disabling root login entirely, and setting up UFW to block everything except SSH."
+tldr: "Whether you're just getting started with VPS, moving from shared hosting, or already experienced, this is a walkthrough of hardening a fresh server from scratch — patching, locking down SSH, and setting up a firewall."
 tags: [devops, linux, vps, security]
 ---
 
